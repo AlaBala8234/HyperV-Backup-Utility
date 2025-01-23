@@ -11,10 +11,10 @@ Hyper-V Backup Utility is available from:
 
 Please consider supporting my work:
 
-* Sign up using [Patreon](https://www.patreon.com/mikegalvin).
+* Support with [Github Sponsors](https://github.com/sponsors/Digressive).
 * Support with a one-time donation using [PayPal](https://www.paypal.me/digressive).
 
-Please report issues on Github via the issues tab.
+Please report any problems via the ‘issues’ tab on GitHub.
 
 -Mike
 
@@ -28,32 +28,33 @@ Please report issues on Github via the issues tab.
 * Tested on Windows 11, Windows 10, Windows Server 2022, Windows Server 2019 and Windows Server 2016.
 * The backup log can be sent via email and/or webhook.
 
+## SMB share support
+
+An SMB share can be used as a backup location by specifying the UNC path (\\\server\share) with the -BackupTo option. Please note that you must use either a local working directory (-Wd path) or the -NoPerms option if your SMB share host and Hyper-V host are not members of an Active Directory domain. Hyper-V cannot perform export VMs to a network share without the Hyper-V host having permissions to the share which are possible when using Windows servers and Active Directory and not available with a NAS appliance such as TrueNAS, QNAP or Synology.
+
+## When to use the -NoPerms option
+
+The -NoPerms switch is intended as a workaround when used in an environment where the Hyper-V host cannot be given the required permissions to run a regular export to a remote device such as a NAS device. To copy all the files necessary for a complete backup, the VM must be in an offline state for the operation to be completed. Therefore the script will put the VM in a 'Saved' state (if it is running) so the files can be copied. In previous versions the VM would be shutdown but this is a faster and safer method as the VM does not require any integrations to be put in a saved state.
+
+Hyper-V’s export operation requires that the computer account in Active Directory have access to the location where the exports are being stored. When a NAS is intended to be used as an export location, Hyper-V will not be able to complete the operation as the computer account cannot be given access to the share on the NAS.
+
 ## 7-Zip support
 
 I've implemented support for 7-Zip into the script. You should be able to use any option that 7-zip supports, although currently the only options I've tested fully are '-t' archive type, '-p' password and '-v' split files.
 
-## When to use the -NoPerms switch
+## Generating A Credentials File For SMTP Authentication
 
-The -NoPerms switch is intended as a workaround when used in an environment where the Hyper-V host cannot be given the required permissions to run a regular export to a remote device such as a NAS device.
+The password used for SMTP server authentication must be in an encrypted text file. To generate the password file, run the command below in PowerShell on the same computer and logged in with the user that will be running the utility. When you run the command, you will be prompted for a username and password. Enter the username and password you want to use to authenticate to your SMTP server.
 
-Hyper-V’s export operation requires that the computer account in Active Directory have access to the location where the exports are being stored. I recommend creating an Active Directory group for the Hyper-V hosts and then giving the group the required ‘Full Control’ file and share permissions.
-
-When a NAS, such as a QNAP device is intended to be used as an export location, Hyper-V will not be able to complete the operation as the computer account will not have access to the share on the NAS. To copy all the files necessary for a complete backup, the VM must be in an offline state for the operation to be completed. Due to this the script will put the VM in a 'Saved' state so the files can be copied. Previously the VM would be shutdown but this is a faster and safer method as the VM does not require any integrations to be put in a saved state.
-
-## Generating A Password File
-
-The password used for SMTP server authentication must be in an encrypted text file. To generate the password file, run the following command in PowerShell on the computer and logged in with the user that will be running the utility. When you run the command, you will be prompted for a username and password. Enter the username and password you want to use to authenticate to your SMTP server.
-
-Please note: This is only required if you need to authenticate to the SMTP server when send the log via e-mail.
+Please note: This is only required if you need to authenticate to the SMTP server when sending the log via e-mail.
 
 ``` powershell
-$creds = Get-Credential
-$creds.Password | ConvertFrom-SecureString | Set-Content c:\scripts\ps-script-pwd.txt
+[path\]Hyper-V-Backup.ps1 -MakeCreds [filename.txt]
 ```
 
 After running the commands, you will have a text file containing the encrypted password. When configuring the -Pwd switch enter the path and file name of this file.
 
-## Restoring a Virtual Machine
+## Restoring a virtual machine from backup
 
 The easiest and quickest way to restore a Virtual Machine that has been backed up using this script is to use Hyper-V's native import function.
 
@@ -70,44 +71,93 @@ Here’s a list of all the command line switches and example configurations.
 
 | Command Line Switch | Description | Example |
 | ------------------- | ----------- | ------- |
-| -BackupTo | The path the virtual machines should be backed up to. Each VM will have its own folder inside this location. | [path\] |
-| -List | Enter the path to a txt file with a list of Hyper-V VM names to backup. If this option is not configured, all running VMs will be backed up. | [path\]vms.txt |
-| -Wd | The path to the working directory to use for the backup before copying it to the final backup directory. Use a directory on local fast media to improve performance. | [path\] |
-| -NoPerms | Configures the utility to shut down running VMs to do the file-copy based backup instead of using the Hyper-V export function. If no list is specified and multiple VMs are running, the process will run through the VMs alphabetically. | N/A |
+| -BackupTo | The path the virtual machines should be backed up to. Each VM will have its own folder inside this location. This can be an SMB share but you must also use either -Wd or -NoPerms. | [path] or [\\\server\path] |
+| -SMBUsr | Enter the domain and user required to access the SMB share. Use only if required. | domain\user |
+| -SMBPwd | Enter the password for the above account required to access the SMB share. Use only if required. | password |
+| -AllVms | If this option is configured all VMs will be backed up. | N/A |
+| -Prefix | Use this option to specify VM names beginning with the string specified to backup. | [string] |
+| -List | Enter the path to a txt file with a list of Hyper-V VM names to backup. If this option, -Prefix and -AllVms are not configured, all running VMs will be backed up. | [path\vms.txt] |
+| -CaptureState | Enter a method to use when exporting the VM. If this option is not configured, the default method will be used. | CaptureCrashConsistentState, CaptureSavedState, CaptureDataConsistentState |
+| -Wd | The path to the working directory to use for the backup before copying it to the final backup directory. Use a directory on local fast media to improve performance. | [path] |
+| -NoPerms | Configures the utility to shut down running VMs to do the file-copy based backup instead of using the Hyper-V export function. | N/A |
 | -Keep | Instructs the utility to keep a specified number of days worth of backups. VM backups older than the number of days specified will be deleted. | [number] |
 | -Compress | This option will create a zip file of each Hyper-V VM backup. | N/A |
 | -Sz | Configure the utility to use 7-Zip to compress the VM backups. 7-Zip must be installed in the default location ```$env:ProgramFiles``` if it is not found, Windows compression will be used. | N/A |
 | -SzOptions | Use this switch to configure options for 7-Zip. The switches must be comma separated. | "'-t7z,-v2G,-ppassword'" |
 | -ShortDate | Configure the script to use only the Year, Month and Day in backup filenames. | N/A |
 | -LowDisk | Remove old backups before new ones are created. For low disk space situations. | N/A |
-| -L | The path to output the log file to. | [path\] |
+| -L | The path to output the log file to. | [path] |
 | -LogRotate | Remove logs produced by the utility older than X days | [number] |
 | -NoBanner | Use this option to hide the ASCII art title in the console. | N/A |
 | -Help | Display usage information. No arguments also displays help. | N/A |
-| -Webhook | The txt file containing the URI for a webhook to send the log file to. | [path\]webhook.txt |
+| -ProgCheck | Send notifications (email or webhook) after each VM is backed up. | N/A |
+| -OptimiseVHD | Optimise the VHDs and make them smaller before copy. Must be used with -NoPerms option. | N/A |
+| -Webhook | The txt file containing the URI for a webhook to send the log file to. | [path\webhook.txt] |
 | -Subject | Specify a subject line. If you leave this blank the default subject will be used | "'[Server: Notification]'" |
 | -SendTo | The e-mail address the log should be sent to. For multiple address, separate with a comma. | [example@contoso.com] |
 | -From | The e-mail address the log should be sent from. | [example@contoso.com] |
 | -Smtp | The DNS name or IP address of the SMTP server. | [smtp server address] |
 | -Port | The Port that should be used for the SMTP server. If none is specified then the default of 25 will be used. | [port number] |
 | -User | The user account to authenticate to the SMTP server. | [example@contoso.com] |
-| -Pwd | The txt file containing the encrypted password for SMTP authentication. | [path\]ps-script-pwd.txt |
+| -Pwd | The txt file containing the encrypted password for SMTP authentication. | [path\ps-script-pwd.txt] |
 | -UseSsl | Configures the utility to connect to the SMTP server using SSL. | N/A |
+| -MakeCreds | Use this option to create a credentials file for SMTP authentication. The file will be created in the same directory as the script. | [filename.txt] |
 
-## Example
+## How to use
 
 ``` txt
-[path\]Hyper-V-Backup.ps1 -BackupTo [path\]
+[path\]Hyper-V-Backup.ps1 -BackupTo [path]
 ```
 
 This will backup all the VMs running to the backup location specified.
 
 ## Change Log
 
+### 2024-08-29: Version 24.08.29
+
+* Added Sponsorship information to the projects Github.
+* Added SMB Authentication, based on work from [PR 37](https://github.com/Digressive/HyperV-Backup-Utility/pull/37)
+* Added -MakeCreds option to help in creation of SMTP authentication file.
+* Added -AllVms option to specify the backing up of all VMs on a Hyper-V server without the need for a list file.
+* Added -Prefix option to backup all VMs beginning with the string specified.
+* Added more information about Hyper-V's export limitations to the documentation and in app help.
+
+### 2024-05-11: Version 24.05.11
+
+* Fixed an issue where backup success would be reported when using a working directory and the final destination directory for the backup didn't have enough disk space. From [Issue 27](https://github.com/Digressive/HyperV-Backup-Utility/issues/27)
+
+### 2024-03-21: Version 24.03.21
+
+* Added -CaptureState option for the user to specify the method that Export-VM uses to capture the state of the VM whilst running. From [Issue 34](https://github.com/Digressive/HyperV-Backup-Utility/issues/34)
+
+### 2024-03-18: Version 24.03.18
+
+* Added fix for verifying password protected 7-Zip archives from [Issue 33](https://github.com/Digressive/HyperV-Backup-Utility/issues/33)
+
+### 2024-03-08: Version 24.03.08
+
+* Fixed 7-Zip split files getting renamed and not keeping file extensions when short dates are used.
+* Added a verify operation for 7-Zip created archives as per [Issue 33](https://github.com/Digressive/HyperV-Backup-Utility/issues/33)
+* Fixed an issue where failed backups where also listed as successful.
+* Overhauled the backup success/fail checks. They now work a lot more reliably.
+* Added check for the work dir/backup dir to exist before trying to remove as this caused a script error.
+* Cleaned up console and log file output.
+
+### 2023-09-05: Version 23.09.05
+
+* Added new features from [Issue 28](https://github.com/Digressive/HyperV-Backup-Utility/issues/28)
+* Added -ProgCheck option. With this option set, notifications will be sent after each VM is backup is finished.
+* Added backup time duration to the script output.
+* Added -OptimiseVHD option to shrink the size of the VHDs. Can only be used the the -NoPerms option as the VM must be offline to optimise the VHDs.
+
+### 2023-04-28: Version 23.04.28
+
+* Minor improvement to update checker. If the internet is not reachable it silently errors out.
+
 ### 2023-02-18: Version 23.02.18
 
 * Removed specific SMTP config info from config report. [Issue 24](https://github.com/Digressive/HyperV-Backup-Utility/issues/24)
-* Added a "simple auth edition" version of the script. [Issue #25](https://github.com/Digressive/HyperV-Backup-Utility/issues/25)
+* Added a "simple auth edition" version of the script. [Issue 25](https://github.com/Digressive/HyperV-Backup-Utility/issues/25)
 
 ### 2023-02-07: Version 23.02.07
 
@@ -140,8 +190,8 @@ This will backup all the VMs running to the backup location specified.
 
 ### 2022-06-14: Version 22.06.11
 
-* Fixed [Issue #19 on GitHub](https://github.com/Digressive/HyperV-Backup-Utility/issues/19) - All Virtual Hard Disk folders should now be called "Virtual Hard Disks" and not some with the name "VHD".
-* Fixed [Issue #20 on GitHub](https://github.com/Digressive/HyperV-Backup-Utility/issues/20) - If -L [path\] not configured then a non fatal error would occur as no log path was specified for the log to be output to.
+* Fixed [Issue 19 on GitHub](https://github.com/Digressive/HyperV-Backup-Utility/issues/19) - All Virtual Hard Disk folders should now be called "Virtual Hard Disks" and not some with the name "VHD".
+* Fixed [Issue 20 on GitHub](https://github.com/Digressive/HyperV-Backup-Utility/issues/20) - If -L [path\] not configured then a non fatal error would occur as no log path was specified for the log to be output to.
 * Fixed an issue where a VM would not be backed up if it were in the state "saved" and was present in the user configured VM list text file.
 * Added user feedback - make backup success or fail clear in the log and console.
 * Added user feedback - add "VMs backed up x/x" to email subject for clear success/fail visibility.
@@ -160,7 +210,7 @@ This will backup all the VMs running to the backup location specified.
 
 ### 2022-02-08: Version 22.02.08
 
-* Added fix for potential BSOD on Windows Server 2016 Hyper-V host when exporting VMs using VSS. The change to the registry will only happen if Windows Server 2016 is detected as the Hyper-V host and only if the registry value is in the default state. If it has been configured previously no change will be made. [Issue #17 on GitHub](https://github.com/Digressive/HyperV-Backup-Utility/issues/17)
+* Added fix for potential BSOD on Windows Server 2016 Hyper-V host when exporting VMs using VSS. The change to the registry will only happen if Windows Server 2016 is detected as the Hyper-V host and only if the registry value is in the default state. If it has been configured previously no change will be made. [Issue 17 on GitHub](https://github.com/Digressive/HyperV-Backup-Utility/issues/17)
 
 ### 2022-01-20: Version 22.01.19
 

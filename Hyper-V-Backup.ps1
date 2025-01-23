@@ -1,10 +1,10 @@
 ﻿<#PSScriptInfo
 
-.VERSION 23.02.18
+.VERSION 24.08.29
 
 .GUID c7fb05cc-1e20-4277-9986-523020060668
 
-.AUTHOR Mike Galvin Contact: mike@gal.vin / twitter.com/mikegalvin_ / discord.gg/5ZsnJ5k
+.AUTHOR Mike Galvin Contact: digressive@outlook.com
 
 .COMPANYNAME Mike Galvin
 
@@ -12,7 +12,7 @@
 
 .TAGS Hyper-V Virtual Machines Full Backup Export Permissions Zip History 7-Zip
 
-.LICENSEURI
+.LICENSEURI https://github.com/Digressive/HyperV-Backup-Utility?tab=MIT-1-ov-file
 
 .PROJECTURI https://gal.vin/utils/hyperv-backup-utility/
 
@@ -42,6 +42,8 @@
 Param(
     [alias("BackupTo")]
     $BackupUsr,
+    $SMBUsr,
+    $SMBPwd,
     [alias("Keep")]
     $History,
     [alias("List")]
@@ -49,6 +51,8 @@ Param(
     $VmList,
     [alias("Wd")]
     $WorkDirUsr,
+    [alias("CaptureState")]
+    $CaptureStateOpt,
     [alias("SzOptions")]
     $SzSwitches,
     [alias("L")]
@@ -70,9 +74,13 @@ Param(
     [alias("Pwd")]
     [ValidateScript({Test-Path -Path $_ -PathType Leaf})]
     $SmtpPwd,
+    [alias("MakeCreds")]
+    $MkCr,
     [Alias("Webhook")]
     [ValidateScript({Test-Path -Path $_ -PathType Leaf})]
     [string]$Webh,
+    [string]$Prefix,
+    [switch]$AllVms,
     [switch]$UseSsl,
     [switch]$NoPerms,
     [switch]$Compress,
@@ -80,6 +88,8 @@ Param(
     [switch]$ShortDate,
     [switch]$Help,
     [switch]$LowDisk,
+    [switch]$ProgCheck,
+    [switch]$OptimiseVHD,
     [switch]$NoBanner)
 
 If ($NoBanner -eq $False)
@@ -93,43 +103,56 @@ If ($NoBanner -eq $False)
     |_|  |_|\__, | .__/ \___|_|    \/     |____/ \__,_|\___|_|\_\\__,_| .__/   \____/ \__|_|_|_|\__|\__, |    
              __/ | |                                                  | |                            __/ |    
             |___/|_|                                                  |_|                           |___/     
-                              Mike Galvin   https://gal.vin                     Version 23.02.18              
+                              Mike Galvin   https://gal.vin                     Version 24.08.29              
                          Donate: https://www.paypal.me/digressive             See -help for usage             
 "
 }
 
 If ($PSBoundParameters.Values.Count -eq 0 -or $Help)
 {
-    Write-Host -Object "Usage:
-    From a terminal run: [path\]Hyper-V-Backup.ps1 -BackupTo [path\]
+    Write-Host -Object " Usage:
+    From a terminal run: [path\Hyper-V-Backup.ps1] -BackupTo [path]
     This will backup all the VMs running to the backup location specified.
 
-    Use -List [path\]vms.txt to specify a list of vm names to backup.
-    Use -Wd [path\] to configure a working directory for the backup process.
+    Use -SMBUsr [username] and -SMBPwd [password] to provide authentication to the backup location, such as an SMB share.
+
+    ---- Virtual Machine Selection Options ----
+    Use -List [path\vms.txt] to specify a list of vm names to backup.
+    Use -Prefix [prefix] to specify a list of vm names with a prefix to backup.
+    Use -AllVMs to specify all VMs to backup.
+
+    Use -CaptureState to specify which method to use when exporting.
+    Use -Wd [path] to configure a working directory for the backup process.
     Use -Keep [number] to specify how many days worth of backup to keep.
     Use -ShortDate to use only the Year, Month and Day in backup filenames.
     Use -LowDisk to remove old backups before new ones are created. For low disk space situations.
+    Use -ProgCheck to send notifications (email or webhook) after each VM is backed up.
+    Use -OptimiseVHD to optimise the VHDs and make them smaller before copy. Must be used with -NoPerms option.
 
     -NoPerms should only be used when a regular backup cannot be performed.
     Please note: this will cause the VMs to shutdown during the backup process.
 
+    ---- Compression Options ----
     Use -Compress to compress the VM backups in a zip file using Windows compression.
     Use -Sz to use 7-zip 
     Use -SzOptions ""'-t7z,-v2g,-ppassword'"" to specify 7-zip options like file type, split files or password.
 
-    To output a log: -L [path\].
+    ---- Logging Options ----
+    To output a log: -L [path].
     To remove logs produced by the utility older than X days: -LogRotate [number].
     Run with no ASCII banner: -NoBanner
 
+    ---- Webhook Options ----
     To send the log to a webhook on job completion:
-    Specify a txt file containing the webhook URI with -Webhook [path\]webhook.txt
+    Specify a txt file containing the webhook URI with -Webhook [path\webhook.txt]
 
+    ---- Email Options ----
     To use the 'email log' function:
     Specify the subject line with -Subject ""'[subject line]'"" If you leave this blank a default subject will be used
     Make sure to encapsulate it with double & single quotes as per the example for Powershell to read it correctly.
 
     Specify the 'to' address with -SendTo [example@contoso.com]
-    For multiple address, separate with a comma.
+    For multiple addresses, separate with a comma.
 
     Specify the 'from' address with -From [example@contoso.com]
     Specify the SMTP server with -Smtp [smtp server name]
@@ -138,14 +161,12 @@ If ($PSBoundParameters.Values.Count -eq 0 -or $Help)
     If none is specified then the default of 25 will be used.
 
     Specify the user to access SMTP with -User [example@contoso.com]
-    Specify the password file to use with -Pwd [path\]ps-script-pwd.txt.
+    Specify the password file to use with -Pwd [path\filename.txt].
     Use SSL for SMTP server connection with -UseSsl.
 
-    To generate an encrypted password file run the following commands
-    on the computer and the user that will run the script:
-"
-    Write-Host -Object '    $creds = Get-Credential
-    $creds.Password | ConvertFrom-SecureString | Set-Content [path\]ps-script-pwd.txt'
+    ---- How to generate a credentials file for SMTP authentication ----
+    To generate an encrypted password file run this script with -MakeCreds filename.txt
+    on the computer and running as the user that will run the backup."
 }
 
 else {
@@ -197,7 +218,7 @@ else {
                 Add-Content -Path $Log -Encoding ASCII -Value "$(Get-DateFormat) [INFO] $Evt"
             }
 
-            Write-Host -Object "$(Get-DateFormat) [INFO] $Evt"
+            Write-Host -Object " $(Get-DateFormat) [INFO] $Evt"
         }
 
         If ($Type -eq "Succ")
@@ -207,7 +228,7 @@ else {
                 Add-Content -Path $Log -Encoding ASCII -Value "$(Get-DateFormat) [SUCCESS] $Evt"
             }
 
-            Write-Host -ForegroundColor Green -Object "$(Get-DateFormat) [SUCCESS] $Evt"
+            Write-Host -ForegroundColor Green -Object " $(Get-DateFormat) [SUCCESS] $Evt"
         }
 
         If ($Type -eq "Err")
@@ -217,7 +238,7 @@ else {
                 Add-Content -Path $Log -Encoding ASCII -Value "$(Get-DateFormat) [ERROR] $Evt"
             }
 
-            Write-Host -ForegroundColor Red -BackgroundColor Black -Object "$(Get-DateFormat) [ERROR] $Evt"
+            Write-Host -ForegroundColor Red -BackgroundColor Black -Object " $(Get-DateFormat) [ERROR] $Evt"
         }
 
         If ($Type -eq "Conf")
@@ -227,39 +248,179 @@ else {
                 Add-Content -Path $Log -Encoding ASCII -Value "$Evt"
             }
 
-            Write-Host -ForegroundColor Cyan -Object "$Evt"
+            Write-Host -ForegroundColor Cyan -Object " $Evt"
         }
     }
 
-    Function UpdateCheck()
+    ## Function to optimise the VHD
+    Function OptimVHD()
     {
-        $ScriptVersion = "23.02.18"
-        $RawSource = "https://raw.githubusercontent.com/Digressive/HyperV-Backup-Utility/master/Hyper-V-Backup.ps1"
-        $SourceCheck = Invoke-RestMethod -uri "$RawSource"
-        $VerCheck = Select-String -Pattern ".VERSION $ScriptVersion" -InputObject $SourceCheck
-        If ($null -eq $VerCheck)
-        {
-            Write-Log -Type Conf -Evt "*** There is an update available. ***"
+        try {
+            Write-Log -Type Info -Evt "(VM:$Vm) Optimising VHD(s)"
+            $VmVhds = Get-VHD -Path $($Vm | Get-VMHardDiskDrive | Select-Object -ExpandProperty "Path")
+
+            ## Loop through each VHD file and optimise
+            ForEach ($Vhd in $VmVhds) {
+                Write-Log -Type Info -Evt "(VM:$Vm) Used space before optimising VHD [$($Vhd.Path)] = $([math]::ceiling((Get-VHD -Path $Vhd.Path).FileSize / 1GB )) GB"
+                Optimize-VHD -Path "$($Vhd.Path)" -Mode Full
+                Write-Log -Type Info -Evt "(VM:$Vm) Used space after optimising VHD [$($Vhd.Path)] = $([math]::ceiling((Get-VHD -Path $Vhd.Path).FileSize / 1GB )) GB"
+                $intTotalDisksSize += (Get-VHD -Path $Vhd.Path).FileSize
+            }
+
+            Write-Log -Type Info -Evt "(VM:$Vm) Done optimising VHD(s)"
+        }
+
+        catch {
+            $_.Exception.Message | Write-Log -Type Err -Evt "(VM:$Vm) $_"
         }
     }
+
+    ## Function for Notifications
+    Function Notify()
+    {
+        ## This whole block is for e-mail, if it is configured.
+        If ($SmtpServer)
+        {
+            If (Test-Path -Path $Log)
+            {
+                ## Default e-mail subject if none is configured.
+                If ($Null -eq $MailSubject)
+                {
+                    $MailSubject = "Hyper-V Backup Utility Log"
+                }
+
+                ## Default Smtp Port if none is configured.
+                If ($Null -eq $SmtpPort)
+                {
+                    $SmtpPort = "25"
+                }
+
+                ## Setting the contents of the log to be the e-mail body.
+                $MailBody = Get-Content -Path $Log | Out-String
+
+                ForEach ($MailAddress in $MailTo)
+                {
+                    ## If an smtp password is configured, get the username and password together for authentication.
+                    ## If an smtp password is not provided then send the e-mail without authentication and obviously no SSL.
+                    If ($SmtpPwd)
+                    {
+                        $SmtpPwdEncrypt = Get-Content $SmtpPwd | ConvertTo-SecureString
+                        $SmtpCreds = New-Object System.Management.Automation.PSCredential -ArgumentList ($SmtpUser, $SmtpPwdEncrypt)
+
+                        ## If -ssl switch is used, send the email with SSL.
+                        ## If it isn't then don't use SSL, but still authenticate with the credentials.
+                        If ($UseSsl)
+                        {
+                            Send-MailMessage -To $MailAddress -From $MailFrom -Subject "$MailSubject $Succi/$($Vms.count) VMs Successful" -Body $MailBody -SmtpServer $SmtpServer -Port $SmtpPort -UseSsl -Credential $SmtpCreds
+                        }
+
+                        else {
+                            Send-MailMessage -To $MailAddress -From $MailFrom -Subject "$MailSubject $Succi/$($Vms.count) VMs Successful" -Body $MailBody -SmtpServer $SmtpServer -Port $SmtpPort -Credential $SmtpCreds
+                        }
+                    }
+
+                    else {
+                        Send-MailMessage -To $MailAddress -From $MailFrom -Subject "$MailSubject $Succi/$($Vms.count) VMs Successful" -Body $MailBody -SmtpServer $SmtpServer -Port $SmtpPort
+                    }
+                }
+            }
+
+            else {
+                Write-Host -ForegroundColor Red -BackgroundColor Black -Object " There's no log file to email."
+            }
+        }
+        ## End of Email block
+
+        ## Webhook block
+        If ($Webh)
+        {
+            $WebHookUri = Get-Content $Webh
+            $WebHookArr = @()
+
+            $title       = "Hyper-V Backup Utility $Succi/$($Vms.count) VMs Successful"
+            $description = Get-Content -Path $Log | Out-String
+
+            $WebHookObj = [PSCustomObject]@{
+                title = $title
+                description = $description
+            }
+
+            $WebHookArr += $WebHookObj
+            $payload = [PSCustomObject]@{
+                embeds = $WebHookArr
+            }
+
+            Invoke-RestMethod -Uri $WebHookUri -Body ($payload | ConvertTo-Json -Depth 2) -Method Post -ContentType 'application/json'
+        }
+    }
+
+    ## Function for Update Check
+    Function UpdateCheck()
+    {
+        $ScriptVersion = "24.08.29"
+        $RawSource = "https://raw.githubusercontent.com/Digressive/HyperV-Backup-Utility/master/Hyper-V-Backup.ps1"
+
+        try {
+            $SourceCheck = Invoke-RestMethod -uri "$RawSource"
+            $VerCheck = $SourceCheck -split '\n' | Select-String -Pattern ".VERSION $ScriptVersion" -SimpleMatch -CaseSensitive -Quiet
+
+            If ($VerCheck -ne $True)
+            {
+                Write-Log -Type Conf -Evt "-- There is an update available! --"
+            }
+        }
+
+        catch {
+        }
+    }
+
     ##
     ## Start of backup Options functions
     ##
 
     Function CompressFiles7zip($CompressDateFormat,$CompressDir,$CompressFileName)
     {
+        $7zipOutput = $null
+        $7zipTestOutput = $null
         $CompressFileNameSet = $CompressFileName+$CompressDateFormat
-        ## 7-zip compression with shortdate
-        try {
-            & "$env:programfiles\7-Zip\7z.exe" $SzSwSplit -bso0 a ("$CompressDir\$CompressFileNameSet") "$CompressDir\$Vm\*"
-            $BackupSucc = $true
-        }
-        catch {
-            $_.Exception.Message | Write-Log -Type Err -Evt "(VM:$Vm) $_"
-            $BackupSucc = $false
+
+        ## Makeshift error catch for 7zip in PowerShell
+        $7zipOutput = & "$env:programfiles\7-Zip\7z.exe" $SzSwSplit -bso0 a ("$CompressDir\$CompressFileNameSet") "$CompressDir\$Vm\*" *>&1
+
+        If ($7zipOutput -match "ERROR:")
+        {
+            Write-Log -Type Err -Evt "(VM:$Vm) 7zip encountered an error creating the archive"
+            Set-Variable -Name 'BackupSucc' -Value $false -Scope 2
         }
 
-        $BackupSucc | Out-Null
+        else {
+            Set-Variable -Name 'BackupSucc' -Value $true -Scope 2
+        }
+
+        $GetTheFile = Get-ChildItem -Path $CompressDir -File -Filter "$CompressFileNameSet.*"
+
+        $archivePassword = if ($null -ne $SzSwitches)
+        {
+            $password = ($SzSwitches -split ',') | Where-Object { $_ -match '^-p(.*)' } | ForEach-Object { $matches[1] }
+            if ($password -ne "" -and $null -ne  $password)
+            {
+                "-p$password"
+            }
+            else {""}
+        }
+        else {""}
+
+        $7zipTestOutput = & "$env:programfiles\7-Zip\7z.exe" $archivePassword -bso0 t $($GetTheFile.FullName) *>&1
+
+        If ($7zipTestOutput -match "ERROR:")
+        {
+            Write-Log -Type Err -Evt "(VM:$Vm) 7zip encountered an error verifying the archive"
+            Set-Variable -Name 'BackupSucc' -Value $false -Scope 2
+        }
+
+        else {
+            Set-Variable -Name 'BackupSucc' -Value $true -Scope 2
+        }
     }
 
     Function CompressFilesWin($CompressDateFormat,$CompressDir,$CompressFileName)
@@ -270,14 +431,12 @@ else {
         ## Windows compression with shortdate
         try {
             [io.compression.zipfile]::CreateFromDirectory("$CompressDir\$Vm", ("$CompressDir\$CompressFileNameSet.zip"))
-            $BackupSucc = $true
+            Set-Variable -Name 'BackupSucc' -Value $true -Scope 2
         }
         catch {
             $_.Exception.Message | Write-Log -Type Err -Evt "(VM:$Vm) $_"
-            $BackupSucc = $false
+            Set-Variable -Name 'BackupSucc' -Value $false -Scope 2
         }
-
-        $BackupSucc | Out-Null
     }
 
     Function ShortDateFileNo($ShortDateDir,$ShortDateFilePat)
@@ -302,42 +461,21 @@ else {
                 If ($SzSwSplit -like "-v*")
                 {
                     ## 7-zip compression with shortdate configured and a number appended.
-                    try {
-                        $ShortDateNN7zFix = $ShortDateNN -replace '[.*]'
-                        CompressFiles7zip -CompressDir $ShortDateDir -CompressFileName $ShortDateNN7zFix
-                        $BackupSucc = $true
-                    }
-                    catch {
-                        $_.Exception.Message | Write-Log -Type Err -Evt "(VM:$Vm) $_"
-                        $BackupSucc = $false
-                    }
+                    $ShortDateNN7zFix = $ShortDateNN -replace '[.*]'
+                    CompressFiles7zip -CompressDir $ShortDateDir -CompressFileName $ShortDateNN7zFix
                 }
                 
                 else {
                     ## 7-zip compression with shortdate configured and a number appended.
-                    try {
-                        $ShortDateNN7zFix = $ShortDateNN -replace '[.*]'
-                        CompressFiles7zip -CompressDir $ShortDateDir -CompressFileName $ShortDateNN7zFix
-                        $BackupSucc = $true
-                    }
-                    catch {
-                        $_.Exception.Message | Write-Log -Type Err -Evt "(VM:$Vm) $_"
-                        $BackupSucc = $false
-                    }
+                    $ShortDateNN7zFix = $ShortDateNN -replace '[.*]'
+                    CompressFiles7zip -CompressDir $ShortDateDir -CompressFileName $ShortDateNN7zFix
                 }
             }
 
             else {
                 ## Windows compression with shortdate configured and a number appended.
-                try {
-                    $ShortDateNNWinFix = $ShortDateNN.TrimEnd(".zip")
-                    CompressFilesWin -CompressDir $ShortDateDir -CompressFileName $ShortDateNNWinFix
-                    $BackupSucc = $true
-                }
-                catch {
-                    $_.Exception.Message | Write-Log -Type Err -Evt "(VM:$Vm) $_"
-                    $BackupSucc = $false
-                }
+                $ShortDateNNWinFix = $ShortDateNN.TrimEnd(".zip")
+                CompressFilesWin -CompressDir $ShortDateDir -CompressFileName $ShortDateNNWinFix
             }
         }
 
@@ -357,10 +495,10 @@ else {
                 }
                 catch {
                     $_.Exception.Message | Write-Log -Type Err -Evt "(VM:$Vm) $_"
+                    Set-Variable -Name 'BackupSucc' -Value $false -Scope 1
                 }
             }
         }
-        $BackupSucc | Out-Null
     }
 
     Function ReportRemove($RemoveDir,$RemoveFilePat,$RemoveDirOpt,$RemoveHistory)
@@ -379,11 +517,17 @@ else {
         ## report old files to remove
         If ($LogPathUsr)
         {
-            Get-ChildItem -Path $RemoveDir -Filter $RemoveFullPath @RemoveDirOptSet | Where-Object CreationTime -lt (Get-Date).AddDays(-$RemoveHistory) | Select-Object -Property Name, CreationTime | Format-Table -HideTableHeaders | Out-File -Append $Log -Encoding ASCII
+            If (Test-Path -Path $RemoveDir)
+            {
+                Get-ChildItem -Path $RemoveDir -Filter $RemoveFullPath @RemoveDirOptSet | Where-Object CreationTime -lt (Get-Date).AddDays(-$RemoveHistory) | Select-Object -Property Name, CreationTime | Format-Table -HideTableHeaders | Out-File -Append $Log -Encoding ASCII
+            }
         }
 
         ## remove old files
-        Get-ChildItem -Path $RemoveDir -Filter $RemoveFullPath @RemoveDirOptSet | Where-Object CreationTime -lt (Get-Date).AddDays(-$RemoveHistory) | Remove-Item -Recurse -Force
+        If (Test-Path -Path $RemoveDir)
+        {
+            Get-ChildItem -Path $RemoveDir -Filter $RemoveFullPath @RemoveDirOptSet | Where-Object CreationTime -lt (Get-Date).AddDays(-$RemoveHistory) | Remove-Item -Recurse -Force
+        }
     }
 
     Function RemoveOld()
@@ -406,7 +550,6 @@ else {
             If ($WorkDir -ne $Backup)
             {
                 ## Make sure the backup directory exists.
-
                 If (Test-Path -Path $Backup)
                 {
                     If ($ShortDate)
@@ -602,6 +745,7 @@ else {
 
             else {
                 Write-Log -Type Err -Evt "(VM:$Vm) Compressing backup failed."
+                Set-Variable -Name 'BackupSucc' -Value $false -Scope 1
             }
 
             ## If working directory has been configured by the user, move the compressed backup to the backup folder and rename to include the date.
@@ -621,9 +765,11 @@ else {
                     If ($SzSwSplit -like "-v*")
                     {
                         $SzSplitFiles = Get-ChildItem -Path ("$WorkDir\$VmFixed-$(Get-DateShort).*.*") -File
-                        
+
                         ForEach ($SplitFile in $SzSplitFiles) {
                             $ShortDateT = Test-Path -Path "$Backup\$($SplitFile.name)"
+                            $split7zArray = $SplitFile.basename.Split(".")
+                            $archType = $split7zArray[1]
 
                             If ($ShortDateT)
                             {
@@ -631,13 +777,13 @@ else {
                                 $FileExist = Get-ChildItem -Path "$Backup\$($SplitFile.name)" -File
                                 $i = 1
 
-                                $ShortDateNN = ("$VmFixed-$(Get-DateShort)-{0:D3}" -f $i++ + $FileExist.Extension)
+                                $ShortDateNN = ("$VmFixed-$(Get-DateShort)-{0:D3}" -f $i++ + "." + $archType + $FileExist.Extension)
                                 $ShortDateExistT = Test-Path -Path $Backup\$ShortDateNN
 
                                 If ($ShortDateExistT)
                                 {
                                     do {
-                                        $ShortDateNN = ("$VmFixed-$(Get-DateShort)-{0:D3}" -f $i++ + $FileExist.Extension)
+                                        $ShortDateNN = ("$VmFixed-$(Get-DateShort)-{0:D3}" -f $i++ + "." + $archType + $FileExist.Extension)
                                         $ShortDateExistT = Test-Path -Path $Backup\$ShortDateNN
                                     } until ($ShortDateExistT -eq $false)
                                 }
@@ -647,6 +793,7 @@ else {
                                 }
                                 catch {
                                     $_.Exception.Message | Write-Log -Type Err -Evt "(VM:$Vm) $_"
+                                    Set-Variable -Name 'BackupSucc' -Value $false -Scope 1
                                 }
                             }
 
@@ -656,6 +803,7 @@ else {
                                 }
                                 catch {
                                     $_.Exception.Message | Write-Log -Type Err -Evt "(VM:$Vm) $_"
+                                    Set-Variable -Name 'BackupSucc' -Value $false -Scope 1
                                 }
                             }
                         }
@@ -707,6 +855,7 @@ else {
                             }
                             catch {
                                 $_.Exception.Message | Write-Log -Type Err -Evt "(VM:$Vm) $_"
+                                Set-Variable -Name 'BackupSucc' -Value $false -Scope 1
                             }
                         }
 
@@ -716,6 +865,7 @@ else {
                         }
                         catch {
                             $_.Exception.Message | Write-Log -Type Err -Evt "(VM:$Vm) $_"
+                            Set-Variable -Name 'BackupSucc' -Value $false -Scope 1
                         }
                     }
                 }
@@ -727,6 +877,7 @@ else {
                     }
                     catch {
                         $_.Exception.Message | Write-Log -Type Err -Evt "(VM:$Vm) $_"
+                        Set-Variable -Name 'BackupSucc' -Value $false -Scope 1
                     }
                 }
             }
@@ -749,6 +900,7 @@ else {
                 }
                 catch {
                     $_.Exception.Message | Write-Log -Type Err -Evt "(VM:$Vm) $_"
+                    Set-Variable -Name 'BackupSucc' -Value $false -Scope 1
                 }
             }
 
@@ -758,6 +910,7 @@ else {
                 }
                 catch {
                     $_.Exception.Message | Write-Log -Type Err -Evt "(VM:$Vm) $_"
+                    Set-Variable -Name 'BackupSucc' -Value $false -Scope 1
                 }
             }
 
@@ -786,6 +939,7 @@ else {
                     }
                     catch {
                         $_.Exception.Message | Write-Log -Type Err -Evt "(VM:$Vm) $_"
+                        Set-Variable -Name 'BackupSucc' -Value $false -Scope 1
                     }
                 }
 
@@ -796,11 +950,28 @@ else {
                     }
                     catch {
                         $_.Exception.Message | Write-Log -Type Err -Evt "(VM:$Vm) $_"
+                        Set-Variable -Name 'BackupSucc' -Value $false -Scope 1
                     }
                 }
             }
         }
     }
+    
+    Function CredsGen()
+    {
+        $credsGen = Get-Credential
+        $credsGen.Password | ConvertFrom-SecureString | Set-Content $PSScriptRoot\$MkCr
+
+        If ($null -eq $credsGen)
+        {
+            Write-Log -Type Err -Evt "No credentials were specified."
+        }
+
+        else {
+            Write-Log -Type Succ -Evt "Credentials file created: $PSScriptRoot\$MkCr"
+        }
+    }
+
     ##
     ## End of backup Options functions
     ##
@@ -811,9 +982,16 @@ else {
     $OSVBui = [environment]::OSVersion.Version | Select-Object -expand build
     $OSV = "$OSVMaj" + "." + "$OSVMin" + "." + "$OSVBui"
 
-    If ($Null -eq $BackupUsr)
+    ## Run make creds function to generate an encrypted password file
+    If ($MkCr)
     {
-        Write-Log -Type Err -Evt "You must specify -BackupTo [path\]."
+        CredsGen
+        Exit
+    }
+
+    If ($null -eq $BackupUsr)
+    {
+        Write-Log -Type Err -Evt "You must specify -BackupTo [path]."
         Exit
     }
 
@@ -850,20 +1028,38 @@ else {
 
         If ($Null -eq $LogPathUsr -And $Null -ne $LogHistory)
         {
-            Write-Log -Type Err -Evt "You must specify -L [path\] to use -LogRotate [number]."
+            Write-Log -Type Err -Evt "You must specify -L [path] to use -LogRotate [number]."
             Exit
         }
 
         If ($Null -eq $LogPathUsr -And $SmtpServer)
         {
-            Write-Log -Type Err -Evt "You must specify -L [path\] to use the email log function."
+            Write-Log -Type Err -Evt "You must specify -L [path] to use the email log function."
             Exit
         }
 
         If ($Null -eq $LogPathUsr -And $Webh)
         {
-            Write-Log -Type Err -Evt "You must specify -L [path\] to use send the log to a webhook."
+            Write-Log -Type Err -Evt "You must specify -L [path] to use send the log to a webhook."
             Exit
+        }
+
+        If ($NoPerms -eq $false -And $OptimiseVHD -eq $true)
+        {
+            Write-Log -Type Err -Evt "You must specify -NoPerms to use -OptimiseVHD."
+            Exit
+        }
+
+        If ($NoPerms -eq $true -And $Null -ne $CaptureStateOpt)
+        {
+            Write-Log -Type Err -Evt "You cannot use -CaptureState Options with -NoPerms. They will have no effect."
+            Exit
+        }
+
+        ## Smb Mapping with credentials
+        If ($SMBPwd -And $SMBUsr)
+        {
+            New-SmbMapping -RemotePath "$BackupUsr" -UserName $SMBUsr -Password $SMBPwd | Out-Null
         }
 
         ## Clean User entered string
@@ -881,15 +1077,35 @@ else {
     ## Setting an easier to use variable for computer name of the Hyper-V server.
     $Vs = $Env:ComputerName
 
-    ## If a VM list file is configured, get the content of the file, otherwise just get the running VMs.
+    ## VM selection section
+    ## If a VM list file is configured, get the content of the file, otherwise move on to the next option.
     ## Clean list if it has empty lines.
+    If ($VmList -And $AllVms -Or $Prefix)
+    {
+        Write-Log -Type Err -Evt "With a VM list file configured, -AllVMs and -Prefix will have no effect."
+    }
+
     If ($VmList)
     {
         $Vms = Get-Content $VmList | Where-Object {$_.trim() -ne ""}
     }
 
     else {
-        $Vms = Get-VM | Where-Object {$_.State -eq 'Running'} | Select-Object -ExpandProperty Name
+        If ($Prefix)
+        {
+            $Vms = Get-VM | Where-Object {$_.Name.StartsWith($Prefix)} | Select-Object -ExpandProperty Name
+        }
+
+        else {
+            If ($AllVms)
+            {
+                $Vms = Get-VM | Select-Object -ExpandProperty Name
+            }
+
+            else {
+                $Vms = Get-VM | Where-Object {$_.State -eq 'Running'} | Select-Object -ExpandProperty Name
+            }
+        }
     }
 
     ## Check to see if there are any VMs to process.
@@ -919,12 +1135,21 @@ else {
         ##
         ## Display the current config and log if configured.
         ##
-
         Write-Log -Type Conf -Evt "--- Running with the following config ---"
-        Write-Log -Type Conf -Evt "Utility Version: 23.02.18"
+        Write-Log -Type Conf -Evt "Utility Version: 24.08.29"
         UpdateCheck ## Run Update checker function
         Write-Log -Type Conf -Evt "Hostname: $Vs."
         Write-Log -Type Conf -Evt "Windows Version: $OSV."
+
+        If ($Prefix)
+        {
+            Write-Log -Type Conf -Evt "Prefix config: $Prefix."
+        }
+
+        If ($AllVms)
+        {
+            Write-Log -Type Conf -Evt "All VMs will be backed up."
+        }
 
         If ($Vms)
         {
@@ -932,7 +1157,7 @@ else {
             Write-Log -Type Conf -Evt "VMs to backup:"
             ForEach ($Vm in $Vms)
             {
-                Write-Log -Type Conf -Evt "*** $Vm ***"
+                Write-Log -Type Conf -Evt "$Vm"
             }
         }
 
@@ -941,9 +1166,19 @@ else {
             Write-Log -Type Conf -Evt "Backup directory: $BackupUsr."
         }
 
+        If ($SMBUsr -And $SMBPwd)
+        {
+            Write-Log -Type Conf -Evt "SMB Auth: Configured"
+        }
+
         If ($WorkDirUsr)
         {
             Write-Log -Type Conf -Evt "Working directory: $WorkDirUsr."
+        }
+
+        If ($CaptureStateOpt)
+        {
+            Write-Log -Type Conf -Evt "Export-VM Options: $CaptureStateOpt."
         }
 
         If ($NoPerms)
@@ -993,7 +1228,7 @@ else {
 
         If ($Webh)
         {
-            Write-Log -Type Conf -Evt "Webhook file: $Webh."
+            Write-Log -Type Conf -Evt "Webhook: Configured"
         }
 
         If ($MailTo)
@@ -1026,7 +1261,7 @@ else {
         ## Display current config ends here.
         ##
 
-        ## For Success/Fail stats
+        ## For Success/Fail stats.
         $Succi = 0
         $Faili = 0
 
@@ -1038,155 +1273,183 @@ else {
         {
             ForEach ($Vm in $Vms)
             {
-                $VmFixed = $Vm.replace(".","-")
-                $VmInfo = Get-VM -Name $Vm
-                $BackupSucc = $false
-
-                ## Remove old backups if -LowDisk is configured
-                If ($LowDisk)
+                $VmTested = Get-VM -Name $Vm -ErrorAction SilentlyContinue
+                If ($null -eq $VmTested)
                 {
-                    RemoveOld
-                }
-
-                ## Test for the existence of a previous VM export. If it exists, delete it.
-                If (Test-Path -Path "$WorkDir\$Vm")
-                {
-                    Remove-Item "$WorkDir\$Vm" -Recurse -Force
-                }
-
-                ## Create directories for the VM export.
-                try {
-                    New-Item "$WorkDir\$Vm" -ItemType Directory -Force | Out-Null
-                    New-Item "$WorkDir\$Vm\Virtual Machines" -ItemType Directory -Force | Out-Null
-                    New-Item "$WorkDir\$Vm\Virtual Hard Disks" -ItemType Directory -Force | Out-Null
-                    New-Item "$WorkDir\$Vm\Snapshots" -ItemType Directory -Force | Out-Null
-                    $BackupSucc = $true
-                }
-                catch {
-                    $_.Exception.Message | Write-Log -Type Err -Evt "(VM:$Vm) $_"
-                    $BackupSucc = $false
-                }
-
-                ## Check for VM running
-                If (Get-VM | Where-Object {$VmInfo.State -eq 'Running'})
-                {
-                    $VMwasRunning = $true
-                    Write-Log -Type Info -Evt "(VM:$Vm) VM is running, saving state"
-                    Stop-VM -Name $Vm -Save
+                    Write-Log -Type Err -Evt "VM name: $Vm was not found. Skipping backup."
+                    $Faili = $Faili+1
                 }
 
                 else {
-                    $VMwasRunning = $false
-                    Write-Log -Type Info -Evt "(VM:$Vm) VM not running"
-                }
+                    ## Get VM info.
+                    $VhdSize = Get-VHD -Path $($Vm | Get-VMHardDiskDrive | Select-Object -ExpandProperty "Path") | Select-Object @{Name = "FileSizeGB"; Expression = {[math]::ceiling($_.FileSize/1GB)}}, @{Name = "MaxSizeGB"; Expression = {[math]::ceiling($_.Size/1GB)}}
+                    Write-Log -Type Info -Evt "(VM:$Vm) has [$((Get-VMProcessor $Vm).Count)] CPU cores, [$([math]::ceiling((Get-VMMemory $Vm).Startup / 1gb))GB] RAM, Storage: [Current Size = $($VhdSize.FileSizeGB)GB - Max Size = $($VhdSize.MaxSizeGB)GB]"
 
-                ##
-                ## Copy the VM config files and log if there is an error.
-                ##
+                    $VmFixed = $Vm.replace(".","-")
+                    $VmInfo = Get-VM -Name $Vm
 
-                ## Check for VM being in the correct state before continuing
-                $VmState = Get-Vm -Name $Vm
+                    ## Remove old backups first if -LowDisk is configured.
+                    If ($LowDisk)
+                    {
+                        RemoveOld
+                    }
 
-                If ($VmState.State -ne 'Off' -OR $VmState.State -ne 'Saved' -AND $VmState.Status -ne 'Operating normally')
-                {
-                    do {
-                        Write-Log -Type Err -Evt "(VM:$Vm) VM not in the desired state. Waiting 60 seconds..."
+                    ## Test for the existence of a previous VM export. If it exists, delete it.
+                    If (Test-Path -Path "$WorkDir\$Vm")
+                    {
+                        Remove-Item "$WorkDir\$Vm" -Recurse -Force
+                    }
+
+                    ## Create directories for the VM export.
+                    try {
+                        New-Item "$WorkDir\$Vm" -ItemType Directory -Force | Out-Null
+                        New-Item "$WorkDir\$Vm\Virtual Machines" -ItemType Directory -Force | Out-Null
+                        New-Item "$WorkDir\$Vm\Virtual Hard Disks" -ItemType Directory -Force | Out-Null
+                        New-Item "$WorkDir\$Vm\Snapshots" -ItemType Directory -Force | Out-Null
+                        $BackupSucc = $true
+                    }
+                    catch {
+                        $_.Exception.Message | Write-Log -Type Err -Evt "(VM:$Vm) $_"
+                        $BackupSucc = $false
+                    }
+
+                    ## Check for VM running
+                    If (Get-VM | Where-Object {$VmInfo.State -eq 'Running'})
+                    {
+                        $VMwasRunning = $true
+                        Write-Log -Type Info -Evt "(VM:$Vm) VM is running, saving state"
+                        Stop-VM -Name $Vm -Save
+                    }
+
+                    else {
+                        $VMwasRunning = $false
+                        Write-Log -Type Info -Evt "(VM:$Vm) VM not running"
+                    }
+
+                    ## If -OptimiseVHD option is set attempt to optimise the VMs VHDs
+                    If ($OptimiseVHD)
+                    {
+                        OptimVHD
+                    }
+
+                    ##
+                    ## Copy the VM config files and log if there is an error.
+                    ##
+
+                    ## Check for VM being in the correct state before continuing
+                    $VmState = Get-Vm -Name $Vm
+
+                    If ($VmState.State -ne 'Off' -OR $VmState.State -ne 'Saved' -AND $VmState.Status -ne 'Operating normally')
+                    {
+                        do {
+                            Write-Log -Type Err -Evt "(VM:$Vm) VM not in the desired state. Waiting 60 seconds..."
+                            Start-Sleep -S 60
+                        } until ($VmState.State -eq 'Off' -OR $VmState.State -eq 'Saved' -AND $VmState.Status -eq 'Operating normally')
+                    }
+
+                    $StartTime = $(get-date)
+
+                    try {
+                        Write-Log -Type Info -Evt "(VM:$Vm) Copying config files"
+                        Copy-Item "$($VmInfo.ConfigurationLocation)\Virtual Machines\$($VmInfo.id)" "$WorkDir\$Vm\Virtual Machines\" -Recurse -Force
+                        Copy-Item "$($VmInfo.ConfigurationLocation)\Virtual Machines\$($VmInfo.id).*" "$WorkDir\$Vm\Virtual Machines\" -Recurse -Force
+                        $BackupSucc = $true
+                    }
+                    catch {
+                        $_.Exception.Message | Write-Log -Type Err -Evt "(VM:$Vm) $_"
+                        $BackupSucc = $false
+                    }
+                    ##
+                    ## End of VM config files.
+                    ##
+
+                    ##
+                    ## Copy the VHDs and log if there is an error.
+                    ##
+                    try {
+                        Write-Log -Type Info -Evt "(VM:$Vm) Copying VHD files"
+                        Copy-Item $VmInfo.HardDrives.Path -Destination "$WorkDir\$Vm\Virtual Hard Disks\" -Recurse -Force
+                        $BackupSucc = $true
+                    }
+                    catch {
+                        $_.Exception.Message | Write-Log -Type Err -Evt "(VM:$Vm) $_"
+                        $BackupSucc = $false
+                    }
+                    ##
+                    ## End of VHDs.
+                    ##
+
+                    ## Get the VM snapshots/checkpoints.
+                    $Snaps = Get-VMSnapshot $Vm
+
+                    ForEach ($Snap in $Snaps)
+                    {
+                        ##
+                        ## Copy the snapshot config files and log if there is an error.
+                        ##
+                        try {
+                            Write-Log -Type Info -Evt "(VM:$Vm) Copying Snapshot config files"
+                            Copy-Item "$($VmInfo.ConfigurationLocation)\Snapshots\$($Snap.id)" "$WorkDir\$Vm\Snapshots\" -Recurse -Force
+                            Copy-Item "$($VmInfo.ConfigurationLocation)\Snapshots\$($Snap.id).*" "$WorkDir\$Vm\Snapshots\" -Recurse -Force
+                            $BackupSucc = $true
+                        }
+                        catch {
+                            $_.Exception.Message | Write-Log -Type Err -Evt "(VM:$Vm) $_"
+                            $BackupSucc = $false
+                        }
+                        ##
+                        ## End of snapshot config.
+                        ##
+
+                        ## Copy the snapshot root VHD.
+                        try {
+                            Write-Log -Type Info -Evt "(VM:$Vm) Copying Snapshot root VHD files"
+                            Copy-Item $Snap.HardDrives.Path -Destination "$WorkDir\$Vm\Virtual Hard Disks\" -Recurse -Force -ErrorAction 'Stop'
+                            $BackupSucc = $true
+                        }
+                        catch {
+                            $_.Exception.Message | Write-Log -Type Err -Evt "(VM:$Vm) $_"
+                            $BackupSucc = $false
+                        }
+                    }
+
+                    If ($VMwasRunning)
+                    {
+                        Write-Log -Type Info -Evt "(VM:$Vm) Starting VM"
+                        Start-VM $Vm
+                        Write-Log -Type Info -Evt "(VM:$Vm) Waiting 60 seconds..."
                         Start-Sleep -S 60
-                    } until ($VmState.State -eq 'Off' -OR $VmState.State -eq 'Saved' -AND $VmState.Status -eq 'Operating normally')
-                }
-
-                try {
-                    $BackupSucc = $false
-                    Write-Log -Type Info -Evt "(VM:$Vm) Copying config files"
-                    Copy-Item "$($VmInfo.ConfigurationLocation)\Virtual Machines\$($VmInfo.id)" "$WorkDir\$Vm\Virtual Machines\" -Recurse -Force
-                    Copy-Item "$($VmInfo.ConfigurationLocation)\Virtual Machines\$($VmInfo.id).*" "$WorkDir\$Vm\Virtual Machines\" -Recurse -Force
-                    $BackupSucc = $true
-                }
-                catch {
-                    $_.Exception.Message | Write-Log -Type Err -Evt "(VM:$Vm) $_"
-                    $BackupSucc = $false
-                }
-                ##
-                ## End of VM config files.
-                ##
-
-                ##
-                ## Copy the VHDs and log if there is an error.
-                ##
-                try {
-                    $BackupSucc = $false
-                    Write-Log -Type Info -Evt "(VM:$Vm) Copying VHD files"
-                    Copy-Item $VmInfo.HardDrives.Path -Destination "$WorkDir\$Vm\Virtual Hard Disks\" -Recurse -Force
-                    $BackupSucc = $true
-                }
-                catch {
-                    $_.Exception.Message | Write-Log -Type Err -Evt "(VM:$Vm) $_"
-                    $BackupSucc = $false
-                }
-                ##
-                ## End of VHDs.
-                ##
-
-                ## Get the VM snapshots/checkpoints.
-                $Snaps = Get-VMSnapshot $Vm
-
-                ForEach ($Snap in $Snaps)
-                {
-                    ##
-                    ## Copy the snapshot config files and log if there is an error.
-                    ##
-                    try {
-                        $BackupSucc = $false
-                        Write-Log -Type Info -Evt "(VM:$Vm) Copying Snapshot config files"
-                        Copy-Item "$($VmInfo.ConfigurationLocation)\Snapshots\$($Snap.id)" "$WorkDir\$Vm\Snapshots\" -Recurse -Force
-                        Copy-Item "$($VmInfo.ConfigurationLocation)\Snapshots\$($Snap.id).*" "$WorkDir\$Vm\Snapshots\" -Recurse -Force
-                        $BackupSucc = $true
                     }
-                    catch {
-                        $_.Exception.Message | Write-Log -Type Err -Evt "(VM:$Vm) $_"
-                        $BackupSucc = $false
-                    }
-                    ##
-                    ## End of snapshot config.
-                    ##
 
-                    ## Copy the snapshot root VHD.
-                    try {
-                        $BackupSucc = $false
-                        Write-Log -Type Info -Evt "(VM:$Vm) Copying Snapshot root VHD files"
-                        Copy-Item $Snap.HardDrives.Path -Destination "$WorkDir\$Vm\Virtual Hard Disks\" -Recurse -Force -ErrorAction 'Stop'
-                        $BackupSucc = $true
-                    }
-                    catch {
-                        $_.Exception.Message | Write-Log -Type Err -Evt "(VM:$Vm) $_"
-                        $BackupSucc = $false
-                    }
-                }
-
-                If ($VMwasRunning)
-                {
-                    Write-Log -Type Info -Evt "(VM:$Vm) Starting VM"
-                    Start-VM $Vm
-                    Write-Log -Type Info -Evt "(VM:$Vm) Waiting 60 seconds..."
-                    Start-Sleep -S 60
-                }
-
-                If ($BackupSucc)
-                {
                     ## Remove old backups if -LowDisk is NOT configured
                     If ($LowDisk -eq $false)
                     {
                         RemoveOld
                     }
 
-                    OptionsRun
-                    Write-Log -Type Succ -Evt "(VM:$Vm) Backup Successful"
-                    $Succi = $Succi+1
-                }
+                    If ($BackupSucc)
+                    {
+                        OptionsRun
+                    }
 
-                else {
-                    Write-Log -Type Err -Evt "(VM:$Vm) Backup failed, VM skipped"
-                    $Faili = $Faili+1
+                    If ($BackupSucc)
+                    {
+                        Write-Log -Type Succ -Evt "(VM:$Vm) Backup Successful"
+                        $Succi = $Succi+1
+                    }
+                    else {
+                        Write-Log -Type Err -Evt "(VM:$Vm) Backup failed"
+                        $Faili = $Faili+1
+                    }
+
+                    $elapsedTime = $(get-date) - $StartTime
+                    $totalTime = "{0:HH:mm:ss}" -f ([datetime]$elapsedTime.Ticks)
+                    Write-Log -Type Info -Evt "(VM:$Vm) Processed in $totalTime"
+
+                    If ($ProgCheck)
+                    {
+                        Notify
+                    }
                 }
             }
         }
@@ -1197,22 +1460,33 @@ else {
         ##
         ## Standard export process starts here.
         ##
-
         ## If the -NoPerms switch is NOT set, for each VM check for the existence of a previous export.
         ## If it exists then delete it, otherwise the export will fail.
         else {
             ForEach ($Vm in $Vms)
             {
-                If (Test-Path -Path "$WorkDir\$Vm")
+                $VmTested = Get-VM -Name $Vm -ErrorAction SilentlyContinue
+                If ($null -eq $VmTested)
                 {
-                    Remove-Item "$WorkDir\$Vm" -Recurse -Force
+                    Write-Log -Type Err -Evt "VM name: $Vm was not found. Could not get any info."
                 }
 
-                If ($WorkDir -ne $Backup)
-                {
-                    If (Test-Path -Path "$Backup\$Vm")
+                else {
+                    ## Get VM info
+                    $VhdSize = Get-VHD -Path $($Vm | Get-VMHardDiskDrive | Select-Object -ExpandProperty "Path") | Select-Object @{Name = "FileSizeGB"; Expression = {[math]::ceiling($_.FileSize/1GB)}}, @{Name = "MaxSizeGB"; Expression = {[math]::ceiling($_.Size/1GB)}}
+                    Write-Log -Type Info -Evt "(VM:$Vm) has [$((Get-VMProcessor $Vm).Count)] CPU cores, [$([math]::ceiling((Get-VMMemory $Vm).Startup / 1gb))GB] RAM, Storage: [Current Size = $($VhdSize.FileSizeGB)GB - Max Size = $($VhdSize.MaxSizeGB)GB]"
+
+                    If (Test-Path -Path "$WorkDir\$Vm")
                     {
-                        Remove-Item "$Backup\$Vm" -Recurse -Force
+                        Remove-Item "$WorkDir\$Vm" -Recurse -Force
+                    }
+
+                    If ($WorkDir -ne $Backup)
+                    {
+                        If (Test-Path -Path "$Backup\$Vm")
+                        {
+                            Remove-Item "$Backup\$Vm" -Recurse -Force
+                        }
                     }
                 }
             }
@@ -1221,7 +1495,7 @@ else {
             ## Don't want to mess up anyone's config. :)
             If ($OSV -eq "10.0.14393")
             {
-                If ($null -eq (get-ItemProperty -literalPath HKLM:\System\CurrentControlSet\Services\VSS\Diag\).'(Default)')
+                If ($null -eq (Get-ItemProperty -LiteralPath HKLM:\System\CurrentControlSet\Services\VSS\Diag\).'(Default)')
                 {
                     $RegVSSFix = $True
                     Set-ItemProperty -Path HKLM:\System\CurrentControlSet\Services\VSS\Diag -Name "(default)" -Value "Disabled"
@@ -1232,41 +1506,69 @@ else {
             ## Do a regular export of the VMs.
             ForEach ($Vm in $Vms)
             {
-                $VmFixed = $Vm.replace(".","-")
-                $BackupSucc = $false
-
-                ## Remove old backups if -LowDisk is configured
-                If ($LowDisk)
+                $VmTested = Get-VM -Name $Vm -ErrorAction SilentlyContinue
+                If ($null -eq $VmTested)
                 {
-                    RemoveOld
+                    Write-Log -Type Err -Evt "VM name: $Vm was not found. Skipping backup."
+                    $Faili = $Faili+1
                 }
 
-                try {
-                    Write-Log -Type Info -Evt "(VM:$Vm) Attempting to export VM"
-                    $Vm | Export-VM -Path "$WorkDir" -ErrorAction 'Stop'
-                    $BackupSucc = $true
-                }
-                catch {
-                    $_.Exception.Message | Write-Log -Type Err -Evt "(VM:$Vm) $_"
-                    $BackupSucc = $false
-                }
+                else {
+                    $VmFixed = $Vm.replace(".","-")
 
-                If ($BackupSucc)
-                {
+                    ## Remove old backups if -LowDisk is configured
+                    If ($LowDisk)
+                    {
+                        RemoveOld
+                    }
+
+                    $StartTime = $(get-date)
+
+                    try {
+                        Write-Log -Type Info -Evt "(VM:$Vm) Attempting to export VM"
+                        If ($Null -ne $CaptureStateOpt)
+                        {
+                            $Vm | Export-VM -CaptureLiveState $CaptureStateOpt -Path "$WorkDir" -ErrorAction 'Stop'
+                        }
+                        else {
+                            $Vm | Export-VM -Path "$WorkDir" -ErrorAction 'Stop'
+                        }
+                        $BackupSucc = $true
+                    }
+                    catch {
+                        $_.Exception.Message | Write-Log -Type Err -Evt "(VM:$Vm) $_"
+                        $BackupSucc = $false
+                    }
+
                     ## Remove old backups if -LowDisk is NOT configured
                     If ($LowDisk -eq $false)
                     {
                         RemoveOld
                     }
 
-                    OptionsRun
-                    Write-Log -Type Succ -Evt "(VM:$Vm) Backup Successful"
-                    $Succi = $Succi+1
-                }
+                    If ($BackupSucc)
+                    {
+                        OptionsRun
+                    }
 
-                else {
-                    Write-Log -Type Err -Evt "(VM:$Vm) Export failed, VM skipped"
-                    $Faili = $Faili+1
+                    If ($BackupSucc)
+                    {
+                        Write-Log -Type Succ -Evt "(VM:$Vm) Export Successful"
+                        $Succi = $Succi+1
+                    }
+                    else {
+                        Write-Log -Type Err -Evt "(VM:$Vm) Export failed"
+                        $Faili = $Faili+1
+                    }
+
+                    $elapsedTime = $(get-date) - $StartTime
+                    $totalTime = "{0:HH:mm:ss}" -f ([datetime]$elapsedTime.Ticks)
+                    Write-Log -Type Info -Evt "(VM:$Vm) Processed in $totalTime"
+
+                    If ($ProgCheck)
+                    {
+                        Notify
+                    }
                 }
             }
 
@@ -1292,8 +1594,11 @@ else {
 
     Write-Log -Type Info -Evt "Process finished."
     Write-Log -Type Info -Evt "Number of VMs to Backup:$($Vms.count)"
-    Write-Log -Type Info -Evt "Backups Successful:$Succi"
-    Write-Log -Type Info -Evt "Backups Failed:$Faili"
+    If ($($Vms.count) -ne 0)
+    {
+        Write-Log -Type Info -Evt "Backups Successful:$Succi"
+        Write-Log -Type Info -Evt "Backups Failed:$Faili"
+    }
 
     If ($Null -ne $LogHistory)
     {
@@ -1302,79 +1607,9 @@ else {
         Get-ChildItem -Path "$LogPath\Hyper-V-Backup_*" -File | Where-Object CreationTime -lt (Get-Date).AddDays(-$LogHistory) | Remove-Item -Recurse
     }
 
-    ## This whole block is for e-mail, if it is configured.
-    If ($SmtpServer)
+    If ($ProgCheck -eq $false)
     {
-        If (Test-Path -Path $Log)
-        {
-            ## Default e-mail subject if none is configured.
-            If ($Null -eq $MailSubject)
-            {
-                $MailSubject = "Hyper-V Backup Utility Log"
-            }
-
-            ## Default Smtp Port if none is configured.
-            If ($Null -eq $SmtpPort)
-            {
-                $SmtpPort = "25"
-            }
-
-            ## Setting the contents of the log to be the e-mail body.
-            $MailBody = Get-Content -Path $Log | Out-String
-
-            ForEach ($MailAddress in $MailTo)
-            {
-                ## If an smtp password is configured, get the username and password together for authentication.
-                ## If an smtp password is not provided then send the e-mail without authentication and obviously no SSL.
-                If ($SmtpPwd)
-                {
-                    $SmtpPwdEncrypt = Get-Content $SmtpPwd | ConvertTo-SecureString
-                    $SmtpCreds = New-Object System.Management.Automation.PSCredential -ArgumentList ($SmtpUser, $SmtpPwdEncrypt)
-
-                    ## If -ssl switch is used, send the email with SSL.
-                    ## If it isn't then don't use SSL, but still authenticate with the credentials.
-                    If ($UseSsl)
-                    {
-                        Send-MailMessage -To $MailAddress -From $MailFrom -Subject "$MailSubject $Succi/$($Vms.count) VMs Successful" -Body $MailBody -SmtpServer $SmtpServer -Port $SmtpPort -UseSsl -Credential $SmtpCreds
-                    }
-
-                    else {
-                        Send-MailMessage -To $MailAddress -From $MailFrom -Subject "$MailSubject $Succi/$($Vms.count) VMs Successful" -Body $MailBody -SmtpServer $SmtpServer -Port $SmtpPort -Credential $SmtpCreds
-                    }
-                }
-
-                else {
-                    Send-MailMessage -To $MailAddress -From $MailFrom -Subject "$MailSubject $Succi/$($Vms.count) VMs Successful" -Body $MailBody -SmtpServer $SmtpServer -Port $SmtpPort
-                }
-            }
-        }
-
-        else {
-            Write-Host -ForegroundColor Red -BackgroundColor Black -Object "There's no log file to email."
-        }
-    }
-    ## End of Email block
-
-    ## Webhook block
-    If ($Webh)
-    {
-        $WebHookUri = Get-Content $Webh
-        $WebHookArr = @()
-
-        $title       = "Hyper-V Backup Utility $Succi/$($Vms.count) VMs Successful"
-        $description = Get-Content -Path $Log | Out-String
-
-        $WebHookObj = [PSCustomObject]@{
-            title = $title
-            description = $description
-        }
-
-        $WebHookArr += $WebHookObj
-        $payload = [PSCustomObject]@{
-            embeds = $WebHookArr
-        }
-
-        Invoke-RestMethod -Uri $WebHookUri -Body ($payload | ConvertTo-Json -Depth 2) -Method Post -ContentType 'application/json'
+        Notify
     }
 }
 ## End
